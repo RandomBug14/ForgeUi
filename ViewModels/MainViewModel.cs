@@ -12,6 +12,8 @@ namespace ForgeUI.ViewModels;
 public class MainViewModel : INotifyPropertyChanged
 {
     private readonly HypixelApiService _api;
+
+    public event Action? OnDataLoaded;
     private readonly AppConfig _config;
     private readonly DispatcherTimer _refreshTimer;
     private readonly DispatcherTimer _tickTimer;
@@ -85,36 +87,39 @@ public class MainViewModel : INotifyPropertyChanged
     public bool HasMembers => Members.Count > 0;
 
     public MainViewModel(HypixelApiService api, AppConfig config)
+{
+    _api = api;
+    _config = config;
+    Bazaar = new BazaarViewModel(api);
+
+    // UUID par défaut depuis la config
+    _playerUuidClean = config.Player.UUID.Replace("-", "");
+
+    _refreshTimer = new DispatcherTimer
     {
-        _api = api;
-        _config = config;
-        Bazaar = new BazaarViewModel(api);
+        Interval = TimeSpan.FromSeconds(config.App.AutoRefreshSeconds)
+    };
+    _refreshTimer.Tick += async (_, _) =>
+    {
+        NextRefreshIn = config.App.AutoRefreshSeconds;
+        await LoadDataAsync();
+    };
 
-        _refreshTimer = new DispatcherTimer
+    _tickTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+    _tickTimer.Tick += (_, _) =>
+    {
+        NextRefreshIn = Math.Max(0, NextRefreshIn - 1);
+        foreach (var member in Members)
         {
-            Interval = TimeSpan.FromSeconds(config.App.AutoRefreshSeconds)
-        };
-        _refreshTimer.Tick += async (_, _) =>
-        {
-            NextRefreshIn = config.App.AutoRefreshSeconds;
-            await LoadDataAsync();
-        };
+            foreach (var slot in member.Slots)
+                slot.Refresh();
+            member.RefreshCounts();
+        }
+        OnMembersRefreshed?.Invoke();
+    };
 
-        _tickTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _tickTimer.Tick += (_, _) =>
-        {
-            NextRefreshIn = Math.Max(0, NextRefreshIn - 1);
-            foreach (var member in Members)
-            {
-                foreach (var slot in member.Slots)
-                    slot.Refresh();
-                member.RefreshCounts();
-            }
-            OnMembersRefreshed?.Invoke();
-        };
-
-        Members.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasMembers));
-    }
+    Members.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasMembers));
+}
 
     // ── Recherche par pseudo ──────────────────────────────────────────────────
 
@@ -267,7 +272,7 @@ public class MainViewModel : INotifyPropertyChanged
 
             StatusMessage = "Chargement du Bazaar…";
             await Bazaar.RefreshAsync();
-
+OnDataLoaded?.Invoke();
             LastUpdate = DateTime.Now;
             NextRefreshIn = _config.App.AutoRefreshSeconds;
             StatusMessage = $"✔ {Members.Count} membre(s) chargé(s)";
@@ -302,7 +307,41 @@ public class MainViewModel : INotifyPropertyChanged
         _tickTimer.Stop();
         Bazaar.StopTimer();
     }
+public async Task LoadDefaultPlayerAsync()
+{
+    if (IsLoading) return;
+    IsLoading = true;
+    ErrorMessage = string.Empty;
+    StatusMessage = "Chargement du profil par défaut…";
 
+    try
+    {
+        var profiles = await _api.GetProfilesAsync(_config.Player.UUID);
+        if (profiles == null || profiles.Count == 0)
+        {
+            ErrorMessage = "Aucun profil trouvé.";
+            return;
+        }
+
+        var target = profiles.FirstOrDefault(p =>
+                          p.CuteName.Equals(_config.App.TargetProfileName, StringComparison.OrdinalIgnoreCase))
+                      ?? profiles.FirstOrDefault(p => p.Selected)
+                      ?? profiles.First();
+
+        _cachedProfileId = target.ProfileId;
+        ProfileName = target.CuteName;
+
+        await LoadMembersAsync();
+    }
+    catch (Exception ex)
+    {
+        ErrorMessage = $"Erreur : {ex.Message}";
+    }
+    finally
+    {
+        IsLoading = false;
+    }
+}
     public event PropertyChangedEventHandler? PropertyChanged;
     protected void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

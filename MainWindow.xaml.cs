@@ -27,17 +27,24 @@ public partial class MainWindow : Window
         DataContext = _vm;
     }
 
-    protected override void OnContentRendered(EventArgs e)
-    {
-        base.OnContentRendered(e);
-        _vm.StartTimers();
+protected override async void OnContentRendered(EventArgs e)
+{
+    base.OnContentRendered(e);
+    _vm.StartTimers();
+    await _vm.LoadDefaultPlayerAsync();
 
-        _vm.OnMembersRefreshed += () =>
-        {
-            if (_miniBar?.IsVisible == true)
-                _miniBar.RefreshLeds(_vm.Members);
-        };
-    }
+    _vm.OnMembersRefreshed += () =>
+{
+    if (_miniBar?.IsVisible == true)
+        _miniBar.RefreshLeds(_vm.Members);
+};
+
+_vm.OnDataLoaded += async () =>
+{
+    if (_miniBar?.IsVisible == true)
+        await _miniBar.InitMembersAsync(_vm.Members);
+};
+}
 
     private async void SearchButton_Click(object sender, RoutedEventArgs e)
     {
